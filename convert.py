@@ -1,7 +1,7 @@
 import pandas as pd
 
 
-df = pd.read_parquet("valid.parquet")
+df = pd.read_parquet("data/valid.parquet")
 
 print("Количество строк и столбцов:")
 print(df.shape)
