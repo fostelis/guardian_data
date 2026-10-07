@@ -251,6 +251,35 @@ def extract_tool_calls(messages: list[Message]) -> list[ToolCall]:
 
     return calls
 
+def extract_tool_calls_from_text(
+    text: str,
+) -> list[ToolCall]:
+    calls = []
+
+    pattern = re.compile(
+        r"→\s*TOOL_CALL\s+([A-Za-z_][A-Za-z0-9_]*)"
+        r":\s*(\{[^\n]*\})"
+    )
+
+    for match in pattern.finditer(text):
+        name = match.group(1)
+        raw_arguments = match.group(2)
+
+        try:
+            arguments = json.loads(raw_arguments)
+        except json.JSONDecodeError:
+            arguments = {}
+
+        calls.append(
+            ToolCall(
+                name=name,
+                arguments=arguments,
+                turn=None,
+            )
+        )
+
+    return calls
+
 def extract_tool_responses(
     messages: list[Message],
 ) -> list[ToolResponse]:
