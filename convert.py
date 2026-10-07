@@ -1,22 +1,23 @@
+from pathlib import Path
+
 import pandas as pd
 
 
-df = pd.read_parquet("data/valid.parquet")
+project_root = Path(__file__).parent
 
-print("Количество строк и столбцов:")
-print(df.shape)
+input_path = project_root / "data" / "valid.parquet"
+output_path = project_root / "data" / "valid.jsonl"
 
-print("\nНазвания столбцов:")
-print(df.columns.tolist())
 
-print("\nПервые 5 строк:")
-print(df.head())
+df = pd.read_parquet(input_path)
 
 df.to_json(
-    "valid.jsonl",
+    output_path,
     orient="records",
     lines=True,
-    force_ascii=False
+    force_ascii=False,
 )
 
-print("\nГотово! Создан файл valid.jsonl")
+print(f"Converted: {input_path}")
+print(f"Saved to:  {output_path}")
+print(f"Rows:      {len(df)}")

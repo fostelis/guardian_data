@@ -1,5 +1,5 @@
 from pathlib import Path
-from parser import load_jsonl
+from src.parser import load_jsonl
 
 project_root = Path(__file__).parent.parent
 data_path = project_root / "data" / "valid.jsonl"

@@ -1,5 +1,6 @@
 .venv/
 __pycache__/
 .idea/
-
+# Dataset files
 data/*.parquet
+data/*.jsonl

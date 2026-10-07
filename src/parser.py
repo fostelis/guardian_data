@@ -114,29 +114,36 @@ def extract_tag(text: str, tag: str) -> str:
 
 def extract_policy(prompt: str) -> str:
     """
-    Извлекает блок policy.
-    В instructions встречается текст '<policy>',
-    поэтому ищем пару <policy> ... </policy>,
-    а не просто первое вхождение строки.
-    """
-    matches = list(
-        re.finditer(
-            r"<policy>(.*?)</policy>",
-            prompt,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-    )
+    Извлекает настоящий блок <policy>...</policy>.
 
-    if not matches:
+    Внутри <instructions> строка "<policy>" может упоминаться
+    как обычный текст, поэтому нельзя брать первое вхождение
+    открывающего тега.
+
+    Берём закрывающий </policy> и ближайший открывающий
+    <policy> перед ним.
+    """
+
+    closing_tag = "</policy>"
+    opening_tag = "<policy>"
+
+    end = prompt.find(closing_tag)
+
+    if end == -1:
         return ""
 
-    # Настоящий policy — самый большой найденный блок.
-    largest_match = max(
-        matches,
-        key=lambda match: len(match.group(1)),
+    start = prompt.rfind(
+        opening_tag,
+        0,
+        end,
     )
 
-    return largest_match.group(1).strip()
+    if start == -1:
+        return ""
+
+    start += len(opening_tag)
+
+    return prompt[start:end].strip()
 
 def extract_available_tools(prompt: str) -> str:
     """
