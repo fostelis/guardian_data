@@ -4,3 +4,11 @@ __pycache__/
 # Dataset files
 data/*.parquet
 data/*.jsonl
+
+# Generated reports and temporary files
+features/
+*.bak
+*_analysis.txt
+airline_case.txt
+.pytest_cache/
+*.pyc

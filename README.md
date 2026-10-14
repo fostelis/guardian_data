@@ -1,95 +1,92 @@
 # Guardian of Truth
 
-Rule-based and model-assisted solution for hallucination detection in customer-service agent responses.
+A rule-based feature extraction module for hallucination detection
+in customer-service AI responses.
 
 The task is binary classification:
+- 0: correct response
+- 1: hallucination or policy violation
 
-- `0` — correct response;
-- `1` — hallucinated or policy-violating response.
+The dataset covers airline, banking, retail, and telecom domains.
 
-The dataset contains examples from four domains:
+## Implemented components
 
-- airline;
-- banking knowledge;
-- retail;
-- telecom.
+- Prompt and tool-call parser: `src/parser.py`
+- Rule engine: `src/rules/tools.py`
+- Rule evaluation: `analyze_rules.py`
+- ML feature export: `export_rule_features.py`
+- Automated tests: `tests/`
 
-## Project structure
+## Eight rules
 
-```text
-guardian_data/
-├── data/
-│   ├── valid.jsonl
-│   └── valid.parquet
-├── src/
-│   ├── parser.py
-│   ├── inspect_prompts.py
-│   ├── inspect_structure.py
-│   └── rules/
-│       └── tools.py
-├── tests/
-│   └── test_tools.py
-├── analyze_rules.py
-├── convert.py
-├── pytest.ini
-└── README.md
-```
+1. Unavailable tool usage
+2. Tool argument schema violations
+3. Ungrounded tool arguments
+4. Placeholder argument values
+5. Repeated failed tool calls
+6. Invalid argument relationships
+7. Ungrounded ZIP codes
+8. Past flight costs included in upcoming-flight calculations
 
-## Current pipeline
+## Setup
 
-The current implementation parses each prompt into structured components:
-
-- instructions;
-- policy;
-- available tool definitions;
-- dialogue messages;
-- historical tool calls;
-- historical tool responses.
-
-The rule engine currently checks:
-
-1. use of unavailable tools;
-2. tool argument schema violations;
-3. grounding of ID-like arguments;
-4. placeholder values;
-5. repeated tool calls that have already failed.
-
-Rule outputs are intended to be used as features in the final classifier, rather than as the complete classification system.
-
-## Tests
-
-Run unit tests from the project root:
+Use Python 3.10 or newer.
 
 ```bash
-pytest -v
+python -m pip install -r requirements.txt
 ```
 
-## Rule analysis
+## Run tests
 
-Run the rules on the validation set:
+```bash
+python -m pytest -q
+```
+
+## Analyze rules
+
+Place `valid.jsonl` in the `data/` directory.
 
 ```bash
 python analyze_rules.py
 ```
 
-The script reports TP, FP, FN, TN, precision, recall and F1 for each rule and for their diagnostic combination.
+## Export ML features
 
-## Data conversion
+Place these files in the `data/` directory:
 
-If `valid.parquet` is available, it can be converted to JSONL with:
+- `split_train.parquet`
+- `split_threshold.parquet`
+- `split_holdout.parquet`
+
+Run:
 
 ```bash
-python convert.py
+python export_rule_features.py
 ```
 
-The converted file is saved as:
+The script generates:
 
-```text
-data/valid.jsonl
-```
+- `features/rules_train.csv`
+- `features/rules_threshold.csv`
+- `features/rules_holdout.csv`
 
-## Status
+Each output contains an example ID, label, eight binary rule
+features, and `rule_any`.
 
-The project is under active development.
+Join exported features to the corresponding dataset by `id`.
 
-The current rule engine is only one component of the planned solution. Further policy, sequence, numerical, date and semantic verification will be added before the final classifier is built.
+## Evaluation notes
+
+The rules are feature extractors, not the complete ML classifier.
+`rule_any` is a diagnostic baseline.
+
+The current dataset was used during rule development.
+Consequently, its holdout split is not a fully independent
+estimate of generalization performance.
+
+Do not tune the final classifier using holdout labels.
+
+## Data
+
+Dataset files are excluded from Git by `.gitignore`.
+Obtain the dataset separately and place it in `data/`.

@@ -1,3 +1,4 @@
+
 from pathlib import Path
 
 from src.parser import load_jsonl, parse_prompt
@@ -7,22 +8,19 @@ from src.rules.tools import (
     check_argument_grounding,
     check_placeholders,
     check_repeated_failed_calls,
+    check_argument_relations,
+    check_zip_grounding,
+    check_future_flight_cost,
 )
 
 
-project_root = Path(__file__).parent
-data_path = project_root / "data" / "valid.jsonl"
-
-examples = load_jsonl(str(data_path))
+PROJECT_ROOT = Path(__file__).parent
+DATA_PATH = PROJECT_ROOT / "data" / "valid.jsonl"
 
 
 def calculate_metrics(results):
-    """Считает TP, FP, FN, TN, Precision, Recall и F1."""
-
-    tp = 0
-    fp = 0
-    fn = 0
-    tn = 0
+    """Calculate binary classification metrics."""
+    tp = fp = fn = tn = 0
 
     for predicted, actual in results:
         if predicted and actual:
@@ -34,13 +32,14 @@ def calculate_metrics(results):
         else:
             tn += 1
 
-    precision = tp / (tp + fp) if tp + fp > 0 else 0.0
-    recall = tp / (tp + fn) if tp + fn > 0 else 0.0
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
 
-    if precision + recall > 0:
-        f1 = 2 * precision * recall / (precision + recall)
-    else:
-        f1 = 0.0
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if precision + recall
+        else 0.0
+    )
 
     return {
         "tp": tp,
@@ -54,316 +53,210 @@ def calculate_metrics(results):
 
 
 def print_metrics(name, metrics):
-    """Красиво печатает метрики правила."""
-
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 70)
     print(name)
-    print("=" * 80)
+    print("=" * 70)
 
-    print(f"TP: {metrics['tp']}")
-    print(f"FP: {metrics['fp']}")
-    print(f"FN: {metrics['fn']}")
-    print(f"TN: {metrics['tn']}")
-    print()
+    for key in ("tp", "fp", "fn", "tn"):
+        print(f"{key.upper()}: {metrics[key]}")
 
     print(f"Precision: {metrics['precision']:.3f}")
     print(f"Recall:    {metrics['recall']:.3f}")
     print(f"F1:        {metrics['f1']:.3f}")
 
 
-availability_results = []
-schema_results = []
-grounding_results = []
-placeholder_results = []
-repeated_failed_results = []
+def analyze():
+    examples = load_jsonl(str(DATA_PATH))
 
-all_rules_results = []
+    rule_names = [
+        "TOOL AVAILABILITY",
+        "TOOL SCHEMA",
+        "ARGUMENT GROUNDING",
+        "PLACEHOLDER",
+        "REPEATED FAILED CALL",
+        "ARGUMENT RELATIONS",
+        "ZIP GROUNDING",
+        "FUTURE FLIGHT COST",
+    ]
 
+    results = {name: [] for name in rule_names}
+    six_rules_results = []
+    seven_rules_results = []
+    eight_rules_results = []
 
-print("=" * 80)
-print("RULE ANALYSIS")
-print("=" * 80)
+    false_negatives = []
+    false_positives = []
 
+    print("=" * 70)
+    print("RULE ANALYSIS")
+    print("=" * 70)
 
-for example in examples:
-    parsed = parse_prompt(example.prompt)
+    for example in examples:
+        parsed = parse_prompt(example.prompt)
+        response = example.response
+        actual = example.label == 1
 
-    # ------------------------------------------------------------------
-    # Запускаем все checker'ы
-    # ------------------------------------------------------------------
+        availability = check_tool_availability(parsed, response)
+        schema = check_tool_schema(parsed, response)
+        grounding = check_argument_grounding(
+            parsed, response, example.prompt
+        )
+        placeholders = check_placeholders(parsed, response)
+        repeated = check_repeated_failed_calls(parsed, response)
+        relations = check_argument_relations(response)
 
-    availability = check_tool_availability(
-        parsed=parsed,
-        response=example.response,
-    )
+        zip_result = check_zip_grounding(
+            original_prompt=example.prompt,
+            response=response,
+        )
 
-    schema = check_tool_schema(
-        parsed=parsed,
-        response=example.response,
-    )
+        future_cost = check_future_flight_cost(
+            original_prompt=example.prompt,
+            response=response,
+        )
 
-    grounding = check_argument_grounding(
-        parsed=parsed,
-        response=example.response,
-        original_prompt=example.prompt,
-    )
+        predictions = {
+            "TOOL AVAILABILITY": availability.has_unknown_tool,
+            "TOOL SCHEMA": schema.has_schema_error,
+            "ARGUMENT GROUNDING": grounding.has_ungrounded_argument,
+            "PLACEHOLDER": placeholders.has_placeholder,
+            "REPEATED FAILED CALL": repeated.has_repeated_failed_call,
+            "ARGUMENT RELATIONS": relations.has_argument_relation_error,
+            "ZIP GROUNDING": zip_result.has_ungrounded_zip,
+            "FUTURE FLIGHT COST": future_cost.has_future_flight_cost_error,
+        }
 
-    placeholders = check_placeholders(
-        parsed=parsed,
-        response=example.response,
-    )
+        for name, predicted in predictions.items():
+            results[name].append((predicted, actual))
 
-    repeated_failed = check_repeated_failed_calls(
-        parsed=parsed,
-        response=example.response,
-    )
+        six_prediction = any(
+            predictions[name] for name in rule_names[:6]
+        )
+        seven_prediction = any(
+            predictions[name] for name in rule_names[:7]
+        )
+        eight_prediction = any(predictions.values())
 
-    actual = example.label == 1
+        six_rules_results.append((six_prediction, actual))
+        seven_rules_results.append((seven_prediction, actual))
+        eight_rules_results.append((eight_prediction, actual))
 
-    # ------------------------------------------------------------------
-    # Получаем предсказание каждого checker'а
-    # ------------------------------------------------------------------
+        if eight_prediction:
+            status = "TP" if actual else "FP"
+            triggered = [
+                name
+                for name, predicted in predictions.items()
+                if predicted
+            ]
 
-    availability_prediction = (
-        availability.has_unknown_tool
-    )
+            print(f"\n[{status}] {example.id}")
+            print("Triggered rules:", ", ".join(triggered))
 
-    schema_prediction = (
-        schema.has_schema_error
-    )
-
-    grounding_prediction = (
-        grounding.has_ungrounded_argument
-    )
-
-    placeholder_prediction = (
-        placeholders.has_placeholder
-    )
-
-    repeated_failed_prediction = (
-        repeated_failed.has_repeated_failed_call
-    )
-
-    # Диагностическое объединение всех правил.
-    #
-    # Пока это НЕ финальный классификатор.
-    # Если сработало хотя бы одно правило,
-    # считаем пример подозрительным.
-    all_prediction = (
-        availability_prediction
-        or schema_prediction
-        or grounding_prediction
-        or placeholder_prediction
-        or repeated_failed_prediction
-    )
-
-    # ------------------------------------------------------------------
-    # Сохраняем результаты для подсчёта метрик
-    # ------------------------------------------------------------------
-
-    availability_results.append(
-        (availability_prediction, actual)
-    )
-
-    schema_results.append(
-        (schema_prediction, actual)
-    )
-
-    grounding_results.append(
-        (grounding_prediction, actual)
-    )
-
-    placeholder_results.append(
-        (placeholder_prediction, actual)
-    )
-
-    repeated_failed_results.append(
-        (repeated_failed_prediction, actual)
-    )
-
-    all_rules_results.append(
-        (all_prediction, actual)
-    )
-
-    # ------------------------------------------------------------------
-    # Печатаем примеры, где сработало хотя бы одно правило
-    # ------------------------------------------------------------------
-
-    if all_prediction:
-        status = "TP" if actual else "FP"
-
-        print()
-        print(f"[{status}] {example.id}")
-        print(f"Label: {example.label}")
-
-        if availability_prediction:
-            print(
-                "  unknown_tool:",
-                availability.unknown_tools,
-            )
-
-        if schema_prediction:
-            print("  schema_error:")
+            if availability.has_unknown_tool:
+                print("  Unknown tools:", availability.unknown_tools)
 
             for issue in schema.issues:
                 print(
-                    f"    tool: {issue.tool_name}"
+                    "  Schema:",
+                    issue.tool_name,
+                    "missing=", issue.missing_arguments,
+                    "unknown=", issue.unknown_arguments,
+                    "wrong_type=", issue.wrong_type_arguments,
                 )
-
-                if issue.missing_arguments:
-                    print(
-                        "      missing:",
-                        issue.missing_arguments,
-                    )
-
-                if issue.unknown_arguments:
-                    print(
-                        "      unknown:",
-                        issue.unknown_arguments,
-                    )
-
-                if issue.wrong_type_arguments:
-                    print(
-                        "      wrong_type:",
-                        issue.wrong_type_arguments,
-                    )
-
-        if grounding_prediction:
-            print("  ungrounded_argument:")
 
             for issue in grounding.issues:
                 print(
-                    f"    {issue.tool_name}."
-                    f"{issue.argument_name}"
-                    f" = {issue.value!r}"
+                    "  Ungrounded ID:",
+                    issue.tool_name,
+                    issue.argument_name,
+                    repr(issue.value),
                 )
-
-        if placeholder_prediction:
-            print("  placeholder:")
 
             for issue in placeholders.issues:
                 print(
-                    f"    {issue.tool_name}."
-                    f"{issue.argument_name}"
-                    f" = {issue.value!r}"
+                    "  Placeholder:",
+                    issue.tool_name,
+                    issue.argument_name,
+                    repr(issue.value),
                 )
 
-        if repeated_failed_prediction:
-            print("  repeated_failed_call:")
-
-            for issue in repeated_failed.issues:
+            for issue in repeated.issues:
                 print(
-                    f"    {issue.tool_name}"
-                    f" {issue.arguments}"
+                    "  Repeated failed call:",
+                    issue.tool_name,
+                    issue.arguments,
                 )
 
+            for issue in relations.issues:
+                print(
+                    "  Argument relation:",
+                    issue.relation_type,
+                    issue.details,
+                )
 
-# ----------------------------------------------------------------------
-# Считаем метрики
-# ----------------------------------------------------------------------
+            for issue in future_cost.issues:
+                print(
+                    '  Past flights in calculation:',
+                    issue.past_reservations,
+                    issue.past_amounts,
+                )
 
-availability_metrics = calculate_metrics(
-    availability_results
-)
+            for issue in zip_result.issues:
+                print(
+                    "  Ungrounded ZIP:",
+                    issue.tool_name,
+                    repr(issue.zip_value),
+                    issue.details,
+                )
 
-schema_metrics = calculate_metrics(
-    schema_results
-)
+        if actual and not eight_prediction:
+            false_negatives.append(example.id)
 
-grounding_metrics = calculate_metrics(
-    grounding_results
-)
+        if not actual and eight_prediction:
+            false_positives.append(example.id)
 
-placeholder_metrics = calculate_metrics(
-    placeholder_results
-)
+    print("\n" + "#" * 70)
+    print("INDIVIDUAL RULE METRICS")
+    print("#" * 70)
 
-repeated_failed_metrics = calculate_metrics(
-    repeated_failed_results
-)
+    for name in rule_names:
+        print_metrics(name, calculate_metrics(results[name]))
 
-all_metrics = calculate_metrics(
-    all_rules_results
-)
+    before = calculate_metrics(six_rules_results)
+    after = calculate_metrics(seven_rules_results)
 
+    print_metrics("ALL SIX RULES (BEFORE)", before)
+    print_metrics("ALL SEVEN RULES (AFTER)", after)
+    eight = calculate_metrics(eight_rules_results)
+    print_metrics("ALL EIGHT RULES", eight)
 
-# ----------------------------------------------------------------------
-# Печатаем метрики
-# ----------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("COMPARISON")
+    print("=" * 70)
 
-print_metrics(
-    "TOOL AVAILABILITY",
-    availability_metrics,
-)
+    print(f"Examples: {len(examples)}")
+    print(f"F1 before: {before['f1']:.3f}")
+    print(f"F1 after:  {after['f1']:.3f}")
+    print(f"F1 change: {after['f1'] - before['f1']:+.3f}")
 
-print_metrics(
-    "TOOL SCHEMA",
-    schema_metrics,
-)
+    print(f"TP before: {before['tp']}")
+    print(f"TP after:  {after['tp']}")
+    print(f"FP before: {before['fp']}")
+    print("F1 with 8 rules:", format(eight["f1"], ".3f"))
+    print("F1 gain (7 to 8):", format(eight["f1"] - after["f1"], "+.3f"))
+    print("TP with 8 rules:", eight["tp"])
+    print("FP with 8 rules:", eight["fp"])
 
-print_metrics(
-    "ARGUMENT GROUNDING",
-    grounding_metrics,
-)
+    print(f"FP after:  {after['fp']}")
 
-print_metrics(
-    "PLACEHOLDER",
-    placeholder_metrics,
-)
+    print("\nFALSE NEGATIVES:")
+    for example_id in false_negatives:
+        print(" ", example_id)
 
-print_metrics(
-    "REPEATED FAILED CALL",
-    repeated_failed_metrics,
-)
-
-print_metrics(
-    "ALL FIVE RULES",
-    all_metrics,
-)
+    print("\nFALSE POSITIVES:")
+    for example_id in false_positives:
+        print(" ", example_id)
 
 
-# ----------------------------------------------------------------------
-# Краткая сводка
-# ----------------------------------------------------------------------
-
-print("\n" + "=" * 80)
-print("SUMMARY")
-print("=" * 80)
-
-print(f"Всего примеров: {len(examples)}")
-
-print(
-    "Availability:",
-    f"{availability_metrics['tp']} TP / "
-    f"{availability_metrics['fp']} FP",
-)
-
-print(
-    "Schema:",
-    f"{schema_metrics['tp']} TP / "
-    f"{schema_metrics['fp']} FP",
-)
-
-print(
-    "Grounding:",
-    f"{grounding_metrics['tp']} TP / "
-    f"{grounding_metrics['fp']} FP",
-)
-
-print(
-    "Placeholder:",
-    f"{placeholder_metrics['tp']} TP / "
-    f"{placeholder_metrics['fp']} FP",
-)
-
-print(
-    "Repeated failed call:",
-    f"{repeated_failed_metrics['tp']} TP / "
-    f"{repeated_failed_metrics['fp']} FP",
-)
-
-print(
-    "All five:",
-    f"{all_metrics['tp']} TP / "
-    f"{all_metrics['fp']} FP",
-)
+if __name__ == "__main__":
+    analyze()

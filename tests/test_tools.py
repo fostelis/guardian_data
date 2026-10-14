@@ -12,6 +12,8 @@ from src.rules.tools import (
     check_argument_grounding,
     check_placeholders,
     check_repeated_failed_calls,
+    check_argument_relations,
+    check_zip_grounding,
 )
 
 
@@ -603,3 +605,105 @@ def test_normal_json_string_is_not_placeholder():
 
     assert result.has_placeholder is False
     assert result.issue_count == 0
+
+def test_same_old_and_new_item_is_detected():
+    response = """
+    → TOOL_CALL modify_pending_order_items: {"item_ids": ["111", "222"], "new_item_ids": ["333", "222"], "order_id": "#W1"}
+    """
+
+    result = check_argument_relations(response)
+
+    assert result.has_argument_relation_error
+    assert result.issue_count == 1
+    assert result.issues[0].relation_type == "same_old_and_new_item"
+
+
+def test_different_old_and_new_items_are_allowed():
+    response = """
+    → TOOL_CALL modify_pending_order_items: {"item_ids": ["111", "222"], "new_item_ids": ["333", "444"], "order_id": "#W1"}
+    """
+
+    result = check_argument_relations(response)
+
+    assert not result.has_argument_relation_error
+    assert result.issue_count == 0
+
+
+def test_return_and_exchange_same_order_is_detected():
+    response = """
+    → TOOL_CALL return_delivered_order_items: {"item_ids": ["111"], "order_id": "#W1"}
+    → TOOL_CALL exchange_delivered_order_items: {"item_ids": ["222"], "new_item_ids": ["333"], "order_id": "#W1"}
+    """
+
+    result = check_argument_relations(response)
+
+    assert result.has_argument_relation_error
+
+    relation_types = {
+        issue.relation_type
+        for issue in result.issues
+    }
+
+    assert "return_and_exchange_same_order" in relation_types
+
+
+def test_return_and_exchange_different_orders_are_allowed():
+    response = """
+    → TOOL_CALL return_delivered_order_items: {"item_ids": ["111"], "order_id": "#W1"}
+    → TOOL_CALL exchange_delivered_order_items: {"item_ids": ["222"], "new_item_ids": ["333"], "order_id": "#W2"}
+    """
+
+    result = check_argument_relations(response)
+
+    assert not result.has_argument_relation_error
+
+
+
+def test_zip_taken_from_email_is_detected():
+    prompt = """
+    [AVAILABLE TOOLS]
+    - find_user_id_by_name_zip
+    \u27e6USER\u27e7
+    My name is Sofia Thomas.
+    My email is sofia.thomas3019@example.com.
+    """
+    response = (
+        "\u2192 TOOL_CALL find_user_id_by_name_zip: "
+        '{"first_name": "Sofia", "last_name": "Thomas", "zip": "3019"}'
+    )
+    result = check_zip_grounding(prompt, response)
+    assert result.has_ungrounded_zip
+    assert result.issue_count == 1
+
+
+def test_zip_explicitly_given_by_user_is_allowed():
+    prompt = """
+    [AVAILABLE TOOLS]
+    - find_user_id_by_name_zip
+    \u27e6USER\u27e7
+    My name is Daiki Johnson, my ZIP code is 80273.
+    """
+    response = (
+        "\u2192 TOOL_CALL find_user_id_by_name_zip: "
+        '{"first_name": "Daiki", "last_name": "Johnson", "zip": "80273"}'
+    )
+    result = check_zip_grounding(prompt, response)
+    assert not result.has_ungrounded_zip
+    assert result.issue_count == 0
+
+
+def test_zip_in_tool_description_is_not_grounding():
+    prompt = """
+    [AVAILABLE TOOLS]
+    - find_user_id_by_name_zip
+        zip: string! - Example zip code '12345'.
+    \u27e6USER\u27e7
+    My name is Sofia Thomas.
+    """
+    response = (
+        "\u2192 TOOL_CALL find_user_id_by_name_zip: "
+        '{"first_name": "Sofia", "last_name": "Thomas", "zip": "12345"}'
+    )
+    result = check_zip_grounding(prompt, response)
+    assert result.has_ungrounded_zip
+    assert result.issue_count == 1
